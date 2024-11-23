@@ -1,72 +1,105 @@
-const bodyParser = require('body-parser');
-const multer = require('multer');
+const { program } = require('commander');
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 
+program
+  .requiredOption('-h, --host <host>', 'Адреса сервера')
+  .requiredOption('-p, --port <port>', 'Порт сервера')
+  .requiredOption('-c, --cache <path>', 'Шлях до директорії для кешу');
+
+program.parse(process.argv);
+const options = program.opts();
+
+const app = express();
 const cacheDir = path.resolve(options.cache);
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
-const upload = multer();
-const getFilePath = (name) => path.join(cacheDir, `${name}.txt`);
-const noteExists = (name) => fs.existsSync(getFilePath(name));
-app.get('/notes/:name', (req, res) => {
-  const noteName = req.params.name;
-  const filePath = getFilePath(noteName);
 
-  if (!noteExists(noteName)) {
-    return res.status(404).send('Not found');
+
+if (!fs.existsSync(cacheDir)) {
+  fs.mkdirSync(cacheDir, { recursive: true });
+}
+
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+
+app.post('/write', (req, res) => {
+  const { note_name, note } = req.body;
+  if (!note_name || !note) {
+    return res.status(400).send('Необхідно вказати ім’я нотатки та текст');
   }
 
-  const noteText = fs.readFileSync(filePath, 'utf-8');
-  res.send(noteText);
-});
-app.put('/notes/:name', (req, res) => {
-  const noteName = req.params.name;
-  const filePath = getFilePath(noteName);
+  const notePath = path.join(cacheDir, `${note_name}.txt`);
 
-  if (!noteExists(noteName)) {
-    return res.status(404).send('Not found');
+  if (fs.existsSync(notePath)) {
+    return res.status(400).send('Нотатка з таким ім’ям вже існує');
   }
 
-  fs.writeFileSync(filePath, req.body.text);
-  res.send('Note updated');
+  fs.writeFileSync(notePath, note, 'utf8');
+  res.status(201).send('Нотатка створена');
 });
 
-app.delete('/notes/:name', (req, res) => {
-  const noteName = req.params.name;
-  const filePath = getFilePath(noteName);
 
-  if (!noteExists(noteName)) {
-    return res.status(404).send('Not found');
+app.get('/notes/:noteName', (req, res) => {
+  const notePath = path.join(cacheDir, `${req.params.noteName}.txt`);
+
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Нотатка не знайдена');
   }
 
-  fs.unlinkSync(filePath);
-  res.send('Note deleted');
+  const note = fs.readFileSync(notePath, 'utf8');
+  res.send(note);
 });
+
 
 app.get('/notes', (req, res) => {
-  const notes = fs.readdirSync(cacheDir)
-    .filter((file) => file.endsWith('.txt'))
-    .map((file) => {
-      const name = path.basename(file, '.txt');
-      const text = fs.readFileSync(path.join(cacheDir, file), 'utf-8');
-      return { name, text };
-    });
+  const files = fs.readdirSync(cacheDir);
+  const notes = files.map(file => {
+    const name = path.basename(file, '.txt');
+    const text = fs.readFileSync(path.join(cacheDir, file), 'utf8');
+    return { name, text };
+  });
 
-  res.json(notes);
+  res.status(200).json(notes);
 });
 
-app.post('/write', upload.none(), (req, res) => {
-  const noteName = req.body.note_name;
-  const noteText = req.body.note;
-  const filePath = getFilePath(noteName);
 
-  if (noteExists(noteName)) {
-    return res.status(400).send('Note already exists');
+app.put('/notes/:noteName', (req, res) => {
+  const notePath = path.join(cacheDir, `${req.params.noteName}.txt`);
+
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Нотатка не знайдена');
   }
 
-  fs.writeFileSync(filePath, noteText);
-  res.status(201).send('Note created');
+  fs.writeFileSync(notePath, req.body.note || '', 'utf8');
+  res.send('Нотатка оновлена');
 });
 
+
+app.delete('/notes/:noteName', (req, res) => {
+  const notePath = path.join(cacheDir, `${req.params.noteName}.txt`);
+
+  if (!fs.existsSync(notePath)) {
+    return res.status(404).send('Нотатка не знайдена');
+  }
+
+  fs.unlinkSync(notePath);
+  res.send('Нотатка видалена');
+});
+
+
 app.get('/UploadForm.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'UploadForm.html'));
+  const formPath = path.join(__dirname, 'UploadForm.html');
+
+  if (!fs.existsSync(formPath)) {
+    return res.status(404).send('HTML форма не знайдена');
+  }
+
+  res.sendFile(formPath);
+});
+
+
+app.listen(options.port, options.host, () => {
+  console.log(`Сервер працює на http://${options.host}:${options.port}`);
 });
